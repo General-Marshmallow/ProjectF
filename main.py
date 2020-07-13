@@ -8,8 +8,14 @@ from pygame.image import *
 import pytmx
 import pickle
 
+# move around with arrow keys
+# numbers 1-4 are for the inventory
+# F1 to escape
+# ESC to deselect a tile
+
 # Initialization
 pygame.init()
+pygame.font.init()
 flags = DOUBLEBUF
 screen = pygame.display.set_mode((800, 600), flags)
 pygame.display.set_caption("Keep going! | F1 to exit")
@@ -48,8 +54,10 @@ class ScriptableObject:
 
 class Game(ABC):
     # renderList is rebuilt every frame, if something is removed from gameObjects, it no longer exists
-    gameObjects = []
-    renderList = []
+    # todo Add layers to the game
+    gameObjects = []  # Holds all tiles
+    screenObjects = []  # Holds gameObjects that collide with the screen
+    renderList = []  # Holds tiles to be rendered next frame
     selectedTile = None
     pressedKey = {
         pygame.K_ESCAPE: False,
@@ -99,7 +107,7 @@ class Game(ABC):
     def image_to_screen(texture_name, pos):
         image = pygame.image.load('Assets/' + texture_name)
         Game.renderList.append(
-            (pygame.transform.scale(image, (round(image.get_width()*(renderSize/16)), round(image.get_height()*(renderSize/16)))), pos))
+            (pygame.transform.scale(image, (round(image.get_width()*(renderSize/32)), round(image.get_height()*(renderSize/32)))), pos))
 
     @staticmethod
     def position_contains(pos, obj):
@@ -133,6 +141,7 @@ class Tile(GameObject):
 
 
 class Item:
+    stackable = False
     texture = 'Empty.png'
 
 
@@ -145,11 +154,32 @@ class FarmLandWet(Tile, BackgroundTile):
 
 
 class Plant(Tile, MainLayerTile):
-    texture = 'Plant.png'
+    texture = 'Plant1.png'
+    growthTextures = [
+        'Plant1.png',
+        'Plant2.png',
+        'Plant3.png',
+        'Plant4.png'
+    ]
 
-    def __init__(self, x=0, y=0):
+    def __init__(self, x=0, y=0, age=0):
         super().__init__(x, y)
-        self.age = 1
+        self.age = age
+
+
+class ConveyorBelt(Tile, MainLayerTile):
+    age = 0  # (0-3) for texture update
+    texture = 'ConveyorBelt1.png'
+    growthTextures = [
+        'ConveyorBelt1.png',
+        'ConveyorBelt2.png',
+        'ConveyorBelt3.png',
+        'ConveyorBelt4.png'
+    ]
+
+    def __init__(self, x, y, direction):
+        self.direction = direction
+        super().__init__(x, y)
 
 
 class Pavement(Tile, BackgroundTile):
@@ -160,12 +190,32 @@ class Seed(Item):
     texture = 'Seed.png'
 
 
-class Pesticide(Item):
+class Fertilizer(Item):
     texture = 'Pesticide.png'
+
+
+class Select(Item):
+    texture = 'SelectItem.png'
+
+
+class Trash(Item):
+    texture = 'Trash.png'
 
 
 class Empty(Item):
     pass
+
+
+# todo setup Tile classes in such a way that these separate Item classes are not necessary
+class ConveyorBeltItem(Item):
+    texture = 'ConveyorBeltItem.png'
+
+
+# Unused
+class ItemStack:
+    def __init__(self, item, count):
+        self.item = item
+        self.count = count
 
 
 class Inventory(ABC):
@@ -213,12 +263,15 @@ for layer in mapData.layers:
 Game.gameObjects = (pickle.load(open('map.pickle', 'rb')))
 
 
-Inventory.inventory[0] = Seed
-Inventory.inventory[1] = Pesticide
+Inventory.inventory = {0: Seed,
+                       1: Fertilizer,
+                       2: Trash,
+                       3: ConveyorBeltItem}
 
 
 while True:
     Game.renderList.clear()
+    Game.screenObjects.clear()
 
     # Exit game
     if Game.pressedKey[pygame.K_F1]:
@@ -247,38 +300,63 @@ while True:
     if Game.pressedKey[pygame.K_DOWN]:
         cameraOffset[1] -= 10
 
-    # Rebuilding the renderList list
+    # Rebuilding screenObjects and renderList
     for gameObject in Game.gameObjects:
         objRect = Game.tile_gameObject_to_screen_rect(gameObject.pos)
         if screenRect.colliderect(objRect):
+            Game.screenObjects.append(gameObject)
             Game.tileGameObjectToRender(gameObject.texture, gameObject.pos)
 
-    for obj in Game.gameObjects:
-        # todo Make the mouse collide script more efficient
+    for obj in Game.screenObjects:
+        # todo move to Plant class
+        # Plant growth
+        if isinstance(obj, Plant):
+            obj.age += 1 if obj.age < 350 else obj.age
+            obj.texture = obj.growthTextures[1] if obj.age > 100 else obj.texture
+            obj.texture = obj.growthTextures[2] if obj.age > 200 else obj.texture
+            obj.texture = obj.growthTextures[3] if obj.age > 300 else obj.texture
+
+        # todo Move to ConveyorBelt class
+        # Conveyor belt texture update
+        if isinstance(obj, ConveyorBelt):
+            ConveyorBelt.texture = ConveyorBelt.growthTextures[ConveyorBelt.age]
+            ConveyorBelt.age += 1
+            ConveyorBelt.age = 0 if ConveyorBelt.age == 3 else ConveyorBelt.age
+
         # Mouse collide script
         collideRect = Game.tile_gameObject_to_screen_rect(obj.pos)
         if collideRect.collidepoint(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1]):
             if pygame.mouse.get_pressed()[0] == 1:
-                # ====== mouse pressed and located ======
+                # v======v mouse pressed and located v======v
+                # todo Organize all inventory based item scripts to their own classes
 
                 # seed planting
                 if Inventory.get_selected_item() == Seed:
+                    # todo Make a tile placement function that does the first check automatically *functionality classes
                     if not Game.position_contains(obj.pos, Plant) and Game.position_contains(obj.pos, FarmLandWet):
                         Plant(obj.pos[0], obj.pos[1])
+
                 # plant removal
-                if Inventory.get_selected_item() == Pesticide:
+                if Inventory.get_selected_item() == Trash:
                     if Game.position_contains_return_index(obj.pos, Plant) != -1:
                         Game.gameObjects.pop(Game.position_contains_return_index(obj.pos, Plant))
-                """    
-                Game.selectedTile = obj.pos
-                """
-            # ====== mouse located ======
 
-            # Tile hover effect
+                # Selecting tile
+                if Inventory.get_selected_item() == Select:
+                    Game.selectedTile = obj.pos
+
+                # Conveyor belt placing
+                if Inventory.get_selected_item() == ConveyorBeltItem:
+                    print('cb')
+                    ConveyorBelt(obj.pos[0], obj.pos[1], 'NS')
+
+            # v======v mouse located v======v
+
+            # Tile hover effect rendering
             Game.tileGameObjectToRender('HoverEffect.png', obj.pos)
-            break
-    # Tile select effect
-    Game.selectedTile = None if Game.pressedKey[pygame.K_ESCAPE] else Game.selectedTile
+
+    Game.selectedTile = None if Game.pressedKey[pygame.K_ESCAPE] or Inventory.get_selected_item() != Select else Game.selectedTile
+    # Tile select effect rendering
     try: Game.tileGameObjectToRender('SelectEffect.png', Game.selectedTile)
     except TypeError: pass
 
