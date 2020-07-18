@@ -4,64 +4,78 @@ from functools import lru_cache
 
 import pygame
 from pygame.locals import *
-from pygame.image import *
 import pytmx
 import pickle
 
 # move around with arrow keys
 # numbers 1-4 are for the inventory
 # F1 to escape
+# F12 to reset gridBlocks (deletes and rebuilds map but not the tiles)
 # ESC to deselect a tile
+# r to rotate conveyorbelts
 
 # Initialization
 pygame.init()
 pygame.font.init()
-flags = DOUBLEBUF
-screen = pygame.display.set_mode((800, 600), flags)
+screen = pygame.display.set_mode((800, 600), flags=DOUBLEBUF)
 pygame.display.set_caption("Keep going! | F1 to exit")
 clock = pygame.time.Clock()
-mapData = pytmx.TiledMap('gameMap.tmx')
 # Some variables
-renderSize = 50
-cameraOffset = [250, 200]
+renderSize = 50  # replace this concept with a more dynamic scaling thing
+cameraOffset = [0, 0]
 screenRect = pygame.Rect((0, 0), (800, 600))
+counter = 0  # TEMPORARY
 
 
-# todo Are the functionality classes really necessary?
+# todo Replace counter system with custom pygame event
+# todo Fix NoneType attribute errors
+
 # Functionality classes
 # =====================
-class BackgroundTile:
-    tileLayer = 'Background'
+class BackgroundTile(ABC):
+    tileLayer = 'Background'  # Sensitive spelling
 
 
-class MainLayerTile:
-    tileLayer = 'MainLayer'
+class MainLayerTile(ABC):
+    tileLayer = 'Main'  # Sensitive spelling
 
 
-class DecorationLayerTile:
-    tileLayer = 'Decoration'
+class DecorationLayerTile(ABC):
+    tileLayer = 'Decoration'  # Sensitive spelling
 
 
-# Only accessible by the game
-class TopLayerTile:
-    tileLayer = 'TopLayer'
-
-
-class ScriptableObject:
-    scriptable = True
 # =====================
+
+layerDictionary = {
+        'Background': BackgroundTile,
+        'Main': MainLayerTile,
+        'Decoration': DecorationLayerTile
+    }
+oppositeDirDict = {
+    'UD': 'DU',
+    'DU': 'UD',
+    'LR': 'RL',
+    'RL': 'LR'
+}
+dirDict = {
+    'UD': (0, 1),
+    'DU': (0, -1),
+    'LR': (1, 0),
+    'RL': (-1, 0)
+}
 
 
 class Game(ABC):
+    GRID_SIZE = 16, 16
     # renderList is rebuilt every frame, if something is removed from gameObjects, it no longer exists
-    # todo Add layers to the game
-    gameObjects = []  # Holds all tiles
-    screenObjects = []  # Holds gameObjects that collide with the screen
-    renderList = []  # Holds tiles to be rendered next frame
+    grid = []  # Stores gridBlocks
+    screenObjects = []
+    renderList = []
     selectedTile = None
     pressedKey = {
         pygame.K_ESCAPE: False,
         pygame.K_F1: False,
+        pygame.K_F12: False,
         pygame.K_UP: False,
         pygame.K_DOWN: False,
         pygame.K_LEFT: False,
@@ -69,36 +83,25 @@ class Game(ABC):
         pygame.K_1: False,
         pygame.K_2: False,
         pygame.K_3: False,
-        pygame.K_4: False
+        pygame.K_4: False,
+        pygame.K_r: False
     }
-
-    # todo Fix this mess of staticmethods and their naming
+    item_rotation = 0  # Keeping track of placing a rotated tile
 
     # returns up-scaled pygame image
     @staticmethod
-    @lru_cache(maxsize=10)
-    def _tileWrapper(textureName):
+    @lru_cache(maxsize=100)
+    def tileWrapper(textureName):
         return pygame.transform.scale(pygame.image.load('Assets/' + textureName), (renderSize, renderSize))
 
     @staticmethod
-    def _imageWrapper(textureName, ):
-        return pygame.image.load('Assets/' + textureName)
-
-    @staticmethod
-    def tileGameObjectToRender(textureName, pos=(0, 0)):
+    def render_with_game_coordinates(textureName, pos=(0, 0)):
         Game.renderList.append(
-            (Game._tileWrapper(textureName), (pos[0] * renderSize + cameraOffset[0],
-                                             pos[1] * renderSize + cameraOffset[1]),)
-        )
+            (Game.tileWrapper(textureName), (pos[0] * renderSize + cameraOffset[0],
+                                             pos[1] * renderSize + cameraOffset[1]),))
 
     @staticmethod
-    def tileRenderObjectToRender(textureName, pos=(0, 0)):
-        Game.renderList.append(
-            (Game._tileWrapper(textureName), (pos[0], pos[1]))
-        )
-
-    @staticmethod
-    def tile_gameObject_to_screen_rect(pos=(0, 0)):
+    def rect_with_game_coordinates(pos):
         return pygame.Rect(
             (pos[0] * renderSize + cameraOffset[0], pos[1] * renderSize + cameraOffset[1]),
             (renderSize, renderSize))
@@ -107,53 +110,201 @@ class Game(ABC):
     def image_to_screen(texture_name, pos):
         image = pygame.image.load('Assets/' + texture_name)
         Game.renderList.append(
-            (pygame.transform.scale(image, (round(image.get_width()*(renderSize/32)), round(image.get_height()*(renderSize/32)))), pos))
+            (pygame.transform.scale(image, (
+                round(image.get_width() * (renderSize / 32)), round(image.get_height() * (renderSize / 32)))), pos))
 
     @staticmethod
-    def position_contains(pos, obj):
-        for gameObject in Game.gameObjects:
-            if gameObject.pos == pos and isinstance(gameObject, obj):
-                return True
+    def get_gridBlock_with_LC(self_object, perspectiveX, perspectiveY):
+        for index, gb in enumerate(Game.grid):
+            if gb == self_object:
+                # found self
+                try:
+                    return Game.grid[index + perspectiveY * Game.GRID_SIZE[0] + perspectiveX]
+                except IndexError:
+                    return None
+
+
+class GridBlock:
+    def __init__(self, pos):
+        self.pos = pos
+        # GridBlock.layers contains objects
+        self.layers = {
+            BackgroundTile: None,
+            MainLayerTile: None,
+            DecorationLayerTile: None
+        }
+        Game.grid.append(self)
+
+    def new_tile(self, tileSetup):  # tileSetup has to be a class instance setup
+        if tileSetup.tileLayer == 'Background':
+            self.layers[BackgroundTile] = tileSetup
+        elif tileSetup.tileLayer == 'Main':
+            self.layers[MainLayerTile] = tileSetup
+        elif tileSetup.tileLayer == 'Decoration':
+            self.layers[DecorationLayerTile] = tileSetup
+        else:
+            print('TileLayer error: ', tileSetup.tileLayer)
+
+    def has_tile(self, tileType):  # tileType is a Class
+        if isinstance(self.layers[layerDictionary[tileType.tileLayer]], tileType):
+            return True
         return False
 
-    @staticmethod
-    def position_contains_return_index(pos, obj):
-        for count, gameObject in enumerate(Game.gameObjects):
-            if gameObject.pos == pos and isinstance(gameObject, obj):
-                return count
-        return -1
+    def get_tile(self, tileType):
+        if isinstance(self.layers[layerDictionary[tileType.tileLayer]], tileType):
+            return self.layers[layerDictionary[tileType.tileLayer]]
+        return None
+
+    def remove_tile(self, tileType):
+        for layer in self.layers:
+            if isinstance(self.layers[layer], tileType):
+                self.layers[layer] = None
+
+    def remove_all(self):
+        for layer in self.layers:
+            self.layers[layer] = None
+
+    def run_mouse_click_script(self):
+        # todo Automate tile placing
+        # todo Automate tile rotation
+        # todo Create a script list for every gridBlock
+        # seed planting
+        if Inventory.get_selected_item() == Seed:
+            if self.has_tile(FarmLandWet):
+                self.new_tile(Plant())
+
+        # plant removal
+        if Inventory.get_selected_item() == Fertilizer:
+            if self.has_tile(Plant):
+                self.remove_tile(Plant)
+
+        # tile removal
+        if Inventory.get_selected_item() == Trash:
+            self.remove_all()
+
+        # Selecting tile
+        if Inventory.get_selected_item() == Select:
+            Game.selectedTile = self.pos
+
+        # Conveyor belt placing
+        if Inventory.get_selected_item() == ConveyorBelt:
+            if self.layers[MainLayerTile] is None:
+                if Game.item_rotation == 0:
+                    self.new_tile(ConveyorBelt('DU'))
+                elif Game.item_rotation == 1:
+                    self.new_tile(ConveyorBelt('LR'))
+                elif Game.item_rotation == 2:
+                    self.new_tile(ConveyorBelt('UD'))
+                elif Game.item_rotation == 3:
+                    self.new_tile(ConveyorBelt('RL'))
+
+        # Wet farmland placing
+        if Inventory.get_selected_item() == FarmLandWet:
+            self.new_tile(FarmLandWet())
+
+        # Farmland placing
+        if Inventory.get_selected_item() == FarmLand:
+            self.new_tile(FarmLand())
+
+        # Storage placing
+        if Inventory.get_selected_item() == Storage:
+            if self.layers[MainLayerTile] is None:
+                if Game.item_rotation == 0:
+                    self.new_tile(Storage('DU'))
+                elif Game.item_rotation == 1:
+                    self.new_tile(Storage('LR'))
+                elif Game.item_rotation == 2:
+                    self.new_tile(Storage('UD'))
+                elif Game.item_rotation == 3:
+                    self.new_tile(Storage('RL'))
+
+        # TEMPORARY Seed->Storage
+        if Inventory.get_selected_item() == Seed and self.has_tile(Storage):
+            self.get_tile(Storage).contents = [ItemStack(Seed, 10)]
+
+    def frame_tick(self):  # Run every frame (for texture updates)
+
+        # Plant growth
+        if self.has_tile(Plant):
+            tile: Plant = self.layers[layerDictionary[Plant.tileLayer]]
+            tile.age += 1 if tile.age < 350 else tile.age
+            tile.texture = tile.growthTextures[1] if tile.age > 100 else tile.texture
+            tile.texture = tile.growthTextures[2] if tile.age > 200 else tile.texture
+            tile.texture = tile.growthTextures[3] if tile.age > 300 else tile.texture
+            self.layers[MainLayerTile] = tile
+
+        # Conveyor belt texture update
+        if self.has_tile(ConveyorBelt):
+            conveyor: ConveyorBelt = self.get_tile(ConveyorBelt)
+            conveyor.texture = ConveyorBelt.growthDict[conveyor.direction][ConveyorBelt.age]
+
+        # Conveyor belt item rendering
+        if self.has_tile(ConveyorBelt):
+            conveyor: ConveyorBelt = self.get_tile(ConveyorBelt)
+            if conveyor.contents is not None:
+                Game.render_with_game_coordinates(conveyor.contents.item.itemTexture, self.pos)
+
+    def tick(self):  # Run less often
+
+        # Items ConveyorBelt->ConveyorBelt
+        if self.has_tile(ConveyorBelt):
+            this_conveyor: ConveyorBelt = self.get_tile(ConveyorBelt)
+            if this_conveyor.input_this_frame:
+                this_conveyor.input_this_frame = False
+            else:
+                if this_conveyor.contents is not None:
+                    if Game.get_gridBlock_with_LC(self, dirDict[this_conveyor.direction][0], dirDict[this_conveyor.direction][1]).has_tile(ConveyorBelt):
+                        if not Game.get_gridBlock_with_LC(self, dirDict[this_conveyor.direction][0], dirDict[this_conveyor.direction][1]).get_tile(ConveyorBelt).direction == oppositeDirDict[this_conveyor.direction]:
+                            other_conveyor: ConveyorBelt = Game.get_gridBlock_with_LC(self, dirDict[this_conveyor.direction][0], dirDict[this_conveyor.direction][1]).get_tile(ConveyorBelt)
+                            try:
+                                if other_conveyor.contents is None:
+                                    # == item transfer == #
+                                    other_conveyor.input_this_frame = True
+                                    other_conveyor.contents = this_conveyor.contents
+                                    this_conveyor.contents = None
+                            except AttributeError:
+                                pass
+
+        # Items Storage->ConveyorBelt
+        if self.has_tile(Storage):
+            storage: Storage = self.get_tile(Storage)
+            if storage.contents:  # if contents is not empty
+                output_gridBlock: GridBlock = Game.get_gridBlock_with_LC(self, dirDict[storage.direction][0], dirDict[storage.direction][1])
+                if output_gridBlock.has_tile(ConveyorBelt):  # if has a conveyorBelt
+                    conveyorBelt: ConveyorBelt = output_gridBlock.get_tile(ConveyorBelt)
+                    if conveyorBelt.contents is None and not storage.direction == oppositeDirDict[conveyorBelt.direction]:  # if conveyorBelt is empty and is not facing storage
+                        # == item transfer == #
+                        # Set conveyorBelt contents to the first Item in Storage contents
+                        conveyorBelt.contents = ItemStack(storage.contents[0].item, 1)
+                        # Subtract 1 from Storage contents
+                        storage.contents[0] = storage.contents[0].return_itemStack_add(-1)
+                        conveyorBelt.input_this_frame = True
+                        if storage.contents[0] is None:
+                            storage.contents.pop(0)
 
 
-class GameObject(ABC):
-    # Default values of a gameObject
-    tileLayer = 'MainLayer'
-    scriptable = False
-    # Must be implemented
-    texture = None
-
-    def __init__(self, x=0, y=0):
-        self.pos = [x, y]
-        Game.gameObjects.append(self)
+class Tile(ABC):
+    tileLayer = None  # Must be implemented
+    texture = None  # Must be implemented
+    itemTexture = 'Empty.png'  # Must be implemented
 
 
-class Tile(GameObject):
-    pass
-
-
-class Item:
+class Item(ABC):
     stackable = False
-    texture = 'Empty.png'
+    itemTexture = 'Empty.png'
 
 
-class FarmLand(Tile, BackgroundTile):
+class FarmLand(BackgroundTile, Tile):
     texture = 'FarmLand.png'
+    itemTexture = 'FarmLand.png'
 
 
-class FarmLandWet(Tile, BackgroundTile):
+class FarmLandWet(BackgroundTile, Tile):
     texture = 'FarmLandWet.png'
+    itemTexture = 'FarmLandWet.png'
 
 
-class Plant(Tile, MainLayerTile):
+class Plant(MainLayerTile, Tile):
     texture = 'Plant1.png'
     growthTextures = [
         'Plant1.png',
@@ -162,74 +313,105 @@ class Plant(Tile, MainLayerTile):
         'Plant4.png'
     ]
 
-    def __init__(self, x=0, y=0, age=0):
-        super().__init__(x, y)
+    def __init__(self, age=0):
         self.age = age
 
 
-class ConveyorBelt(Tile, MainLayerTile):
+class ConveyorBelt(MainLayerTile, Tile):
     age = 0  # (0-3) for texture update
-    texture = 'ConveyorBelt1.png'
-    growthTextures = [
-        'ConveyorBelt1.png',
-        'ConveyorBelt2.png',
-        'ConveyorBelt3.png',
-        'ConveyorBelt4.png'
-    ]
+    texture = 'ConveyorBeltDU1.png'
+    itemTexture = 'ConveyorBeltItem.png'
 
-    def __init__(self, x, y, direction):
+    growthDict = {
+        'DU':
+            ('ConveyorBeltDU1.png',
+             'ConveyorBeltDU2.png',
+             'ConveyorBeltDU3.png',
+             'ConveyorBeltDU4.png'),
+        'UD':
+            ('ConveyorBeltUD1.png',
+             'ConveyorBeltUD2.png',
+             'ConveyorBeltUD3.png',
+             'ConveyorBeltUD4.png'),
+        'LR':
+            ('ConveyorBeltLR1.png',
+             'ConveyorBeltLR2.png',
+             'ConveyorBeltLR3.png',
+             'ConveyorBeltLR4.png'),
+        'RL':
+            ('ConveyorBeltRL1.png',
+             'ConveyorBeltRL2.png',
+             'ConveyorBeltRL3.png',
+             'ConveyorBeltRL4.png'),
+    }
+
+    def __init__(self, direction):
         self.direction = direction
-        super().__init__(x, y)
+        self.contents = None  # ItemStack
+        self.input_this_frame = False  # if something has already been put on this conveyor this frame
 
 
-class Pavement(Tile, BackgroundTile):
+class Storage(MainLayerTile, Tile):
+    texture = 'Storage.png'
+    itemTexture = 'StorageItem.png'
+
+    def __init__(self, direction, contents=None):
+        if contents is None:
+            contents = []
+        self.contents = contents
+        self.direction = direction
+
+
+class Pavement(BackgroundTile, Tile):
     texture = 'Pavement.png'
+    itemTexture = 'Pavement.png'
 
 
 class Seed(Item):
-    texture = 'Seed.png'
+    itemTexture = 'Seed.png'
 
 
 class Fertilizer(Item):
-    texture = 'Pesticide.png'
+    itemTexture = 'Pesticide.png'
 
 
 class Select(Item):
-    texture = 'SelectItem.png'
+    itemTexture = 'SelectItem.png'
 
 
 class Trash(Item):
-    texture = 'Trash.png'
+    itemTexture = 'Trash.png'
 
 
-class Empty(Item):
-    pass
-
-
-# todo setup Tile classes in such a way that these separate Item classes are not necessary
-class ConveyorBeltItem(Item):
-    texture = 'ConveyorBeltItem.png'
-
-
-# Unused
 class ItemStack:
     def __init__(self, item, count):
         self.item = item
-        self.count = count
+        self._count = count
+
+    def return_itemStack_add(self, amount):
+        if self._count + amount >= 1:
+            return ItemStack(self.item, self._count + amount)
+        return None
+
+    def __str__(self):
+        return str(self._count) + ", " + self.item.itemTexture
+
+    def __repr__(self):
+        return str(self._count) + ", " + self.item.itemTexture
 
 
 class Inventory(ABC):
     inventory = {
-        0: Empty,
-        1: Empty,
-        2: Empty,
-        3: Empty
+        0: None,
+        1: None,
+        2: None,
+        3: None
     }
     selected_slot = 0
     screen_pos = (300, 540)
 
     @staticmethod
-    def get_selected_slot_pos():
+    def get_selected_slot_screen_pos():
         return Inventory.screen_pos[0] + Inventory.selected_slot * 50, Inventory.screen_pos[1]
 
     @staticmethod
@@ -238,36 +420,23 @@ class Inventory(ABC):
 
     @staticmethod
     def get_selected_item():
+        return Inventory.inventory[Inventory.selected_slot].item
+
+    @staticmethod
+    def get_selected_ItemStack():
         return Inventory.inventory[Inventory.selected_slot]
 
 
-tileDictionary = {
-    1: FarmLandWet,
-    2: Pavement,
-    3: FarmLand,
-    4: Plant
-}
 # ===================================
 # _______________SETUP_______________
-"""
-# Puts map tiles to gameObjects list
-for layer in mapData.layers:
-    for x, y, id in layer:
-        if not id == 0:
-            if id in tileDictionary:
-                tileDictionary[id](x, y)
-            else:
-                raise NotImplementedError
-"""
+
 # pickle.dump(Game.gameObjects, open('map.pickle', 'wb'))
-Game.gameObjects = (pickle.load(open('map.pickle', 'rb')))
+Game.grid = (pickle.load(open('map.pickle', 'rb')))
 
-
-Inventory.inventory = {0: Seed,
-                       1: Fertilizer,
-                       2: Trash,
-                       3: ConveyorBeltItem}
-
+Inventory.inventory = {0: ItemStack(Seed, 1),
+                       1: ItemStack(Trash, 1),
+                       2: ItemStack(ConveyorBelt, 1),
+                       3: ItemStack(Storage, 1)}
 
 while True:
     Game.renderList.clear()
@@ -275,9 +444,16 @@ while True:
 
     # Exit game
     if Game.pressedKey[pygame.K_F1]:
-        pickle.dump(Game.gameObjects, open('map.pickle', 'wb'))
+        pickle.dump(Game.grid, open('map.pickle', 'wb'))
         pygame.quit()
         sys.exit()
+
+    # Rebuild gridBlocks
+    if Game.pressedKey[pygame.K_F12]:
+        Game.grid = []
+        for y in range(0, Game.GRID_SIZE[1]):
+            for x in range(0, Game.GRID_SIZE[0]):
+                GridBlock((x, y))
 
     # Pressed keys event checking
     for event in pygame.event.get():
@@ -301,78 +477,69 @@ while True:
         cameraOffset[1] -= 10
 
     # Rebuilding screenObjects and renderList
-    for gameObject in Game.gameObjects:
-        objRect = Game.tile_gameObject_to_screen_rect(gameObject.pos)
+    for gridBlock in Game.grid:
+        objRect = Game.rect_with_game_coordinates(gridBlock.pos)
         if screenRect.colliderect(objRect):
-            Game.screenObjects.append(gameObject)
-            Game.tileGameObjectToRender(gameObject.texture, gameObject.pos)
+            Game.screenObjects.append(gridBlock)
+            for layer in gridBlock.layers:
+                if gridBlock.layers[layer] is not None:
+                    Game.render_with_game_coordinates(gridBlock.layers[layer].texture, gridBlock.pos)
 
-    for obj in Game.screenObjects:
-        # todo move to Plant class
-        # Plant growth
-        if isinstance(obj, Plant):
-            obj.age += 1 if obj.age < 350 else obj.age
-            obj.texture = obj.growthTextures[1] if obj.age > 100 else obj.texture
-            obj.texture = obj.growthTextures[2] if obj.age > 200 else obj.texture
-            obj.texture = obj.growthTextures[3] if obj.age > 300 else obj.texture
+    # GridBlock related stuff
+    ConveyorBelt.age += 1
+    if ConveyorBelt.age == 3:
+        ConveyorBelt.age = -1
 
-        # todo Move to ConveyorBelt class
-        # Conveyor belt texture update
-        if isinstance(obj, ConveyorBelt):
-            ConveyorBelt.texture = ConveyorBelt.growthTextures[ConveyorBelt.age]
-            ConveyorBelt.age += 1
-            ConveyorBelt.age = 0 if ConveyorBelt.age == 3 else ConveyorBelt.age
-
+    for gridBlock in Game.grid:
+        gridBlock.frame_tick()
         # Mouse collide script
-        collideRect = Game.tile_gameObject_to_screen_rect(obj.pos)
+        collideRect = Game.rect_with_game_coordinates(gridBlock.pos)
         if collideRect.collidepoint(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1]):
             if pygame.mouse.get_pressed()[0] == 1:
                 # v======v mouse pressed and located v======v
-                # todo Organize all inventory based item scripts to their own classes
-
-                # seed planting
-                if Inventory.get_selected_item() == Seed:
-                    # todo Make a tile placement function that does the first check automatically *functionality classes
-                    if not Game.position_contains(obj.pos, Plant) and Game.position_contains(obj.pos, FarmLandWet):
-                        Plant(obj.pos[0], obj.pos[1])
-
-                # plant removal
-                if Inventory.get_selected_item() == Trash:
-                    if Game.position_contains_return_index(obj.pos, Plant) != -1:
-                        Game.gameObjects.pop(Game.position_contains_return_index(obj.pos, Plant))
-
-                # Selecting tile
-                if Inventory.get_selected_item() == Select:
-                    Game.selectedTile = obj.pos
-
-                # Conveyor belt placing
-                if Inventory.get_selected_item() == ConveyorBeltItem:
-                    print('cb')
-                    ConveyorBelt(obj.pos[0], obj.pos[1], 'NS')
+                gridBlock.run_mouse_click_script()
 
             # v======v mouse located v======v
-
             # Tile hover effect rendering
-            Game.tileGameObjectToRender('HoverEffect.png', obj.pos)
+            Game.render_with_game_coordinates('HoverEffect.png', gridBlock.pos)
 
-    Game.selectedTile = None if Game.pressedKey[pygame.K_ESCAPE] or Inventory.get_selected_item() != Select else Game.selectedTile
+    # Timed events
+    counter += 1
+    if counter > 31:
+        counter = 0
+    if counter in (10, 20, 30):
+        for gridBlock in Game.grid:
+            gridBlock.tick()
+    if counter in (5, 10, 15, 20, 25, 30):
+        # todo Fix single tap case
+        if Game.pressedKey[pygame.K_r]:
+            Game.item_rotation += 1
+            if Game.item_rotation > 3:
+                Game.item_rotation = 0
+
     # Tile select effect rendering
-    try: Game.tileGameObjectToRender('SelectEffect.png', Game.selectedTile)
+    Game.selectedTile = None if Game.pressedKey[pygame.K_ESCAPE] or Inventory.get_selected_item() != Select else Game.selectedTile
+    try: Game.render_with_game_coordinates('SelectEffect.png', Game.selectedTile)
     except TypeError: pass
 
     # Inventory
     Game.image_to_screen('Inventory.png', Inventory.screen_pos)
-    Game.image_to_screen('InventorySelect.png', Inventory.get_selected_slot_pos())
+    Game.image_to_screen('InventorySelect.png', Inventory.get_selected_slot_screen_pos())
     Inventory.selected_slot = 0 if Game.pressedKey[pygame.K_1] else Inventory.selected_slot
     Inventory.selected_slot = 1 if Game.pressedKey[pygame.K_2] else Inventory.selected_slot
     Inventory.selected_slot = 2 if Game.pressedKey[pygame.K_3] else Inventory.selected_slot
     Inventory.selected_slot = 3 if Game.pressedKey[pygame.K_4] else Inventory.selected_slot
     for key in Inventory.inventory:
-        if not Inventory.inventory[key] == Empty:
-            Game.image_to_screen(Inventory.inventory[key].texture, Inventory.get_slot_screen_pos(key))
+        if Inventory.inventory[key] is not None:
+            Game.image_to_screen(Inventory.inventory[key].item.itemTexture, Inventory.get_slot_screen_pos(key))
 
     # debug fps
-    print("fps: "+str(round(clock.get_fps()))+" | objects: "+str(len(Game.renderList)))
+    print("fps: " + str(round(clock.get_fps())) + " | objects: " + str(len(Game.renderList)))
+
+    """ 
+    # debug gridBlock rendering
+    print(Game.grid[17].layers[MainLayerTile])
+    """
 
     # The actual blitting part
     screen.fill(pygame.Color("Black"))

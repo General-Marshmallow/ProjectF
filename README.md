@@ -1,2 +1,2 @@
 # ProjectF
-This is my 4th attempt of making a game with pygame. I honestly don't even know where the crippling depth of game development will take me this time. If there's anything fundamentally wrong in the code, please let me know.
+This is my ~8th attempt of making a game with pygame. I'm aware I tend to overcomplicate things but if there's anything fundamentally wrong with the code, please let me know. I'll try to upload a progress update every Sunday.
