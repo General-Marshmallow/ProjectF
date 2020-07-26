@@ -1,18 +1,18 @@
 import sys
 from abc import ABC
 from functools import lru_cache
+from enum import Enum
 
 import pygame
 from pygame.locals import *
-import pytmx
 import pickle
 
 # move around with arrow keys
 # numbers 1-4 are for the inventory
 # F1 to escape
-# F12 to reset gridBlocks (deletes and rebuilds map but not the tiles)
-# ESC to deselect a tile
-# r to rotate conveyorbelts
+# F12 to reset gridBlocks (deletes and rebuilds grid)
+# ESC to close build menu
+# e to open build menu
 
 # Initialization
 pygame.init()
@@ -21,47 +21,63 @@ screen = pygame.display.set_mode((800, 600), flags=DOUBLEBUF)
 pygame.display.set_caption("Keep going! | F1 to exit")
 clock = pygame.time.Clock()
 # Some variables
-renderSize = 50  # replace this concept with a more dynamic scaling thing
+renderSize = 64  # replace this concept with a more dynamic scaling thing
 cameraOffset = [0, 0]
 screenRect = pygame.Rect((0, 0), (800, 600))
 counter = 0  # TEMPORARY
+CLEAR_MAP = False  # Use in case the map save breaks after changing attributes
 
 
 # todo Replace counter system with custom pygame event
 # todo Fix NoneType attribute errors
 
+
+# todo Replace layer tracking system with this
+class Layer(Enum):
+    BackgroundLayer = 0
+    MainLayer = 1
+    DecorationLayer = 2
+
+
+class Direction(Enum):
+    DU = 3
+    LR = 4
+    UD = 5
+    RL = 6
+
+
 # Functionality classes
 # =====================
 class BackgroundTile(ABC):
-    tileLayer = 'Background'  # Sensitive spelling
+    tileLayer = Layer.BackgroundLayer  # Sensitive spelling
 
 
 class MainLayerTile(ABC):
-    tileLayer = 'Main'  # Sensitive spelling
+    tileLayer = Layer.MainLayer  # Sensitive spelling
 
 
 class DecorationLayerTile(ABC):
-    tileLayer = 'Decoration'  # Sensitive spelling
+    tileLayer = Layer.DecorationLayer  # Sensitive spelling
 
 
 # =====================
 
 layerDictionary = {
-        'Background': BackgroundTile,
-        'Main': MainLayerTile,
-        'Decoration': DecorationLayerTile
+        Layer.BackgroundLayer: BackgroundTile,
+        Layer.MainLayer: MainLayerTile,
+        Layer.DecorationLayer: DecorationLayerTile
     }
 oppositeDirDict = {
-    'UD': 'DU',
-    'DU': 'UD',
-    'LR': 'RL',
-    'RL': 'LR'
+    Direction.UD: Direction.DU,
+    Direction.DU: Direction.UD,
+    Direction.LR: Direction.RL,
+    Direction.RL: Direction.LR
 }
 dirDict = {
-    'UD': (0, 1),
-    'DU': (0, -1),
-    'LR': (1, 0),
-    'RL': (-1, 0)
+    Direction.UD: (0, 1),
+    Direction.DU: (0, -1),
+    Direction.LR: (1, 0),
+    Direction.RL: (-1, 0)
 }
 
 
@@ -84,9 +100,15 @@ class Game(ABC):
         pygame.K_2: False,
         pygame.K_3: False,
         pygame.K_4: False,
-        pygame.K_r: False
+        pygame.K_r: False,
+        pygame.K_e: False
     }
     item_rotation = 0  # Keeping track of placing a rotated tile
+    build_menu_active = False
+    build_menu = []
+    GUI = []  # GUI elements to be rendered this frame todo Rename to cause less confusion
+
+    # todo Make a render function that takes enough arguments to satisfy all rendering needs
 
     # returns up-scaled pygame image
     @staticmethod
@@ -114,6 +136,11 @@ class Game(ABC):
                 round(image.get_width() * (renderSize / 32)), round(image.get_height() * (renderSize / 32)))), pos))
 
     @staticmethod
+    def trueSize_image_to_screen(texture_name, pos):
+        image = pygame.image.load('Assets/' + texture_name)
+        Game.renderList.append((image, pos))
+
+    @staticmethod
     def get_gridBlock_with_LC(self_object, perspectiveX, perspectiveY):
         for index, gb in enumerate(Game.grid):
             if gb == self_object:
@@ -136,11 +163,11 @@ class GridBlock:
         Game.grid.append(self)
 
     def new_tile(self, tileSetup):  # tileSetup has to be a class instance setup
-        if tileSetup.tileLayer == 'Background':
+        if tileSetup.tileLayer == Layer.BackgroundLayer:
             self.layers[BackgroundTile] = tileSetup
-        elif tileSetup.tileLayer == 'Main':
+        elif tileSetup.tileLayer == Layer.MainLayer:
             self.layers[MainLayerTile] = tileSetup
-        elif tileSetup.tileLayer == 'Decoration':
+        elif tileSetup.tileLayer == Layer.MainLayer:
             self.layers[DecorationLayerTile] = tileSetup
         else:
             print('TileLayer error: ', tileSetup.tileLayer)
@@ -165,58 +192,49 @@ class GridBlock:
             self.layers[layer] = None
 
     def run_mouse_click_script(self):
-        # todo Automate tile placing
+        bm = GUI.BuildMenu
+        # todo (!) Automate tile placing
         # todo Automate tile rotation
-        # todo Create a script list for every gridBlock
+        # todo Create a script list for every gridBlock - performance boost
         # seed planting
-        if Inventory.get_selected_item() == Seed:
+        if bm.get_selected_item() == Seed:
             if self.has_tile(FarmLandWet):
                 self.new_tile(Plant())
 
         # plant removal
-        if Inventory.get_selected_item() == Fertilizer:
+        if bm.get_selected_item() == Fertilizer:
             if self.has_tile(Plant):
                 self.remove_tile(Plant)
 
         # tile removal
-        if Inventory.get_selected_item() == Trash:
+        if bm.get_selected_item() == Trash:
             self.remove_all()
 
         # Selecting tile
-        if Inventory.get_selected_item() == Select:
+        if bm.get_selected_item() == Select:
             Game.selectedTile = self.pos
 
         # Conveyor belt placing
-        if Inventory.get_selected_item() == ConveyorBelt:
+        if bm.get_selected_item() == ConveyorBelt:
             if self.layers[MainLayerTile] is None:
-                if Game.item_rotation == 0:
-                    self.new_tile(ConveyorBelt('DU'))
-                elif Game.item_rotation == 1:
-                    self.new_tile(ConveyorBelt('LR'))
-                elif Game.item_rotation == 2:
-                    self.new_tile(ConveyorBelt('UD'))
-                elif Game.item_rotation == 3:
-                    self.new_tile(ConveyorBelt('RL'))
+                self.new_tile(ConveyorBelt(bm.get_selected_rotation()))
 
         # Wet farmland placing
-        if Inventory.get_selected_item() == FarmLandWet:
+        if bm.get_selected_item() == FarmLandWet:
             self.new_tile(FarmLandWet())
 
         # Farmland placing
-        if Inventory.get_selected_item() == FarmLand:
+        if bm.get_selected_item() == FarmLand:
             self.new_tile(FarmLand())
 
         # Storage placing
-        if Inventory.get_selected_item() == Storage:
+        if bm.get_selected_item() == Storage:
             if self.layers[MainLayerTile] is None:
-                if Game.item_rotation == 0:
-                    self.new_tile(Storage('DU'))
-                elif Game.item_rotation == 1:
-                    self.new_tile(Storage('LR'))
-                elif Game.item_rotation == 2:
-                    self.new_tile(Storage('UD'))
-                elif Game.item_rotation == 3:
-                    self.new_tile(Storage('RL'))
+                self.new_tile(Storage(bm.get_selected_rotation()))
+
+        # Pavement placing
+        if bm.get_selected_item() == Pavement:
+            self.new_tile(Pavement())
 
         # TEMPORARY Seed->Storage
         if Inventory.get_selected_item() == Seed and self.has_tile(Storage):
@@ -323,32 +341,40 @@ class ConveyorBelt(MainLayerTile, Tile):
     itemTexture = 'ConveyorBeltItem.png'
 
     growthDict = {
-        'DU':
+        Direction.DU:
             ('ConveyorBeltDU1.png',
              'ConveyorBeltDU2.png',
              'ConveyorBeltDU3.png',
              'ConveyorBeltDU4.png'),
-        'UD':
+        Direction.UD:
             ('ConveyorBeltUD1.png',
              'ConveyorBeltUD2.png',
              'ConveyorBeltUD3.png',
              'ConveyorBeltUD4.png'),
-        'LR':
+        Direction.LR:
             ('ConveyorBeltLR1.png',
              'ConveyorBeltLR2.png',
              'ConveyorBeltLR3.png',
              'ConveyorBeltLR4.png'),
-        'RL':
+        Direction.RL:
             ('ConveyorBeltRL1.png',
              'ConveyorBeltRL2.png',
              'ConveyorBeltRL3.png',
              'ConveyorBeltRL4.png'),
     }
 
-    def __init__(self, direction):
+    def __init__(self, direction: Direction):
         self.direction = direction
         self.contents = None  # ItemStack
-        self.input_this_frame = False  # if something has already been put on this conveyor this frame
+        self.input_this_frame = False  # if something has already been put on this conveyor this fram
+        if direction == Direction.DU:
+            self.texture = 'ConveyorBeltDU1.png'
+        elif direction == Direction.LR:
+            self.texture = 'ConveyorBeltLR1.png'
+        elif direction == Direction.UD:
+            self.texture = 'ConveyorBeltUD1.png'
+        elif direction == Direction.RL:
+            self.texture = 'ConveyorBeltRL1.png'
 
 
 class Storage(MainLayerTile, Tile):
@@ -412,11 +438,11 @@ class Inventory(ABC):
 
     @staticmethod
     def get_selected_slot_screen_pos():
-        return Inventory.screen_pos[0] + Inventory.selected_slot * 50, Inventory.screen_pos[1]
+        return Inventory.screen_pos[0] + Inventory.selected_slot * 64, Inventory.screen_pos[1]
 
     @staticmethod
     def get_slot_screen_pos(slot):
-        return Inventory.screen_pos[0] + slot * 50, Inventory.screen_pos[1]
+        return Inventory.screen_pos[0] + slot * 64, Inventory.screen_pos[1]
 
     @staticmethod
     def get_selected_item():
@@ -425,6 +451,51 @@ class Inventory(ABC):
     @staticmethod
     def get_selected_ItemStack():
         return Inventory.inventory[Inventory.selected_slot]
+
+
+class GuiElement(ABC):  # A box shaped rectangle
+
+    def __init__(self, pos, size):
+        self.pos = pos
+        self.size = self.width, self.height = size
+
+    @lru_cache(maxsize=100)
+    def get_rect(self):
+        return pygame.Rect(self.pos, (self.width, self.height))
+
+
+class ImageButton(GuiElement):
+
+    def __init__(self, pos, size, image):
+        super().__init__(pos, size)
+        self.image = image
+
+
+class GUI(ABC):
+    mouse_collide_element = None  # The gui element currently under mouse
+
+    @staticmethod
+    def new_element(guiElementSetup):
+        Game.GUI.append(guiElementSetup)
+
+    @staticmethod
+    def get_mouse_element():
+        for element in Game.GUI:
+            if element.get_rect().collidepoint(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1]):
+                return element
+        return None
+
+    class BuildMenu(GuiElement, ABC):
+        selected_slot = None
+
+        @staticmethod
+        def get_selected_item():
+            return Game.build_menu[GUI.BuildMenu.selected_slot].__class__
+
+        @staticmethod
+        def get_selected_rotation():  # todo Find a solution to this approach
+            try: return Game.build_menu[GUI.BuildMenu.selected_slot].direction
+            except AttributeError: return Direction.DU
 
 
 # ===================================
@@ -438,9 +509,22 @@ Inventory.inventory = {0: ItemStack(Seed, 1),
                        2: ItemStack(ConveyorBelt, 1),
                        3: ItemStack(Storage, 1)}
 
+Game.build_menu = [FarmLand(), FarmLandWet(),
+                   Seed(), Plant(), Pavement(),
+                   ConveyorBelt(Direction.DU), ConveyorBelt(Direction.LR),
+                   ConveyorBelt(Direction.UD), ConveyorBelt(Direction.RL),
+                   Storage(Direction.DU), Storage(Direction.RL),
+                   Storage(Direction.UD), Storage(Direction.LR),
+                   Select(), Trash(), Fertilizer()]
+
 while True:
     Game.renderList.clear()
     Game.screenObjects.clear()
+    Game.GUI.clear()
+
+    """
+    # == Events == #
+    """
 
     # Exit game
     if Game.pressedKey[pygame.K_F1]:
@@ -448,14 +532,21 @@ while True:
         pygame.quit()
         sys.exit()
 
+    # Open / close build menu
+    if Game.pressedKey[pygame.K_e]:
+        Game.build_menu_active = True
+    if Game.pressedKey[pygame.K_ESCAPE]:
+        Game.build_menu_active = False
+
     # Rebuild gridBlocks
-    if Game.pressedKey[pygame.K_F12]:
+    if Game.pressedKey[pygame.K_F12] or CLEAR_MAP:
         Game.grid = []
         for y in range(0, Game.GRID_SIZE[1]):
             for x in range(0, Game.GRID_SIZE[0]):
                 GridBlock((x, y))
 
     # Pressed keys event checking
+    # todo Fix sticky keys (around every 5 frames should do it)
     for event in pygame.event.get():
         try:
             if event.key in Game.pressedKey:
@@ -490,19 +581,6 @@ while True:
     if ConveyorBelt.age == 3:
         ConveyorBelt.age = -1
 
-    for gridBlock in Game.grid:
-        gridBlock.frame_tick()
-        # Mouse collide script
-        collideRect = Game.rect_with_game_coordinates(gridBlock.pos)
-        if collideRect.collidepoint(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1]):
-            if pygame.mouse.get_pressed()[0] == 1:
-                # v======v mouse pressed and located v======v
-                gridBlock.run_mouse_click_script()
-
-            # v======v mouse located v======v
-            # Tile hover effect rendering
-            Game.render_with_game_coordinates('HoverEffect.png', gridBlock.pos)
-
     # Timed events
     counter += 1
     if counter > 31:
@@ -511,17 +589,36 @@ while True:
         for gridBlock in Game.grid:
             gridBlock.tick()
     if counter in (5, 10, 15, 20, 25, 30):
-        # todo Fix single tap case
+        # todo Fix single tap case (sticky keys)
         if Game.pressedKey[pygame.K_r]:
             Game.item_rotation += 1
             if Game.item_rotation > 3:
                 Game.item_rotation = 0
+
+    """
+    # == Rendering == #
+    """
 
     # Tile select effect rendering
     Game.selectedTile = None if Game.pressedKey[pygame.K_ESCAPE] or Inventory.get_selected_item() != Select else Game.selectedTile
     try: Game.render_with_game_coordinates('SelectEffect.png', Game.selectedTile)
     except TypeError: pass
 
+    # Build menu
+    if Game.build_menu_active:
+        index = 0
+        for y in range(10):
+            for x in range(2):
+                try:
+                    Game.GUI.append(ImageButton((x*32, y*32), (32, 32), Game.build_menu[index].texture))
+                    index += 1
+                except AttributeError:
+                    Game.GUI.append(ImageButton((x*32, y*32), (32, 32), Game.build_menu[index].itemTexture))
+                    index += 1
+                except IndexError: pass
+
+    # Currently replaced by build menu
+    """
     # Inventory
     Game.image_to_screen('Inventory.png', Inventory.screen_pos)
     Game.image_to_screen('InventorySelect.png', Inventory.get_selected_slot_screen_pos())
@@ -532,6 +629,37 @@ while True:
     for key in Inventory.inventory:
         if Inventory.inventory[key] is not None:
             Game.image_to_screen(Inventory.inventory[key].item.itemTexture, Inventory.get_slot_screen_pos(key))
+    """
+
+    for gridBlock in Game.grid:
+        gridBlock.frame_tick()
+        # Mouse collide script
+        collideRect = Game.rect_with_game_coordinates(gridBlock.pos)
+        if collideRect.collidepoint(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1]) and GUI.get_mouse_element() is None:
+            if pygame.mouse.get_pressed()[0] == 1:
+                # v======v mouse pressed and located v======v
+                gridBlock.run_mouse_click_script()
+
+            # v======v mouse located v======v
+            # Tile hover effect rendering
+            Game.render_with_game_coordinates('HoverEffect.png', gridBlock.pos)
+
+    # GUI render
+    for element in Game.GUI:
+        Game.trueSize_image_to_screen(element.image, element.pos)
+    if Game.build_menu_active:
+        # todo Will cause problems in the near future (GUI has other stuff than buildMenu)
+        #  - make GUI mouse collision detection automatic
+        for i, element in enumerate(Game.GUI):
+            if element.get_rect().collidepoint(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1]):
+                Game.trueSize_image_to_screen('HoverEffect.png', element.pos)
+                if pygame.mouse.get_pressed()[0] == 1:
+                    GUI.BuildMenu.selected_slot = i
+    if Game.pressedKey[pygame.K_ESCAPE]:
+        GUI.BuildMenu.selected_slot = None
+
+    try: Game.trueSize_image_to_screen('SelectEffect.png', Game.GUI[GUI.BuildMenu.selected_slot].pos)
+    except TypeError: pass
 
     # debug fps
     print("fps: " + str(round(clock.get_fps())) + " | objects: " + str(len(Game.renderList)))
@@ -542,7 +670,7 @@ while True:
     """
 
     # The actual blitting part
-    screen.fill(pygame.Color("Black"))
+    screen.fill((3, 0, 12))
     screen.blits(Game.renderList)
 
     # Screen refresh
