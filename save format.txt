@@ -1,0 +1,43 @@
+Tile data:
+
+[grid]:
+    gridBlock(obj):
+        *tileClass
+        {data}:
+            *data tags
+
+There is a function get_data() that handles gridBlock data tags.
+If a gridBlock does not have the data value required for the current game version's get_data() function, the default
+value will be used.
+
+
+
+All data tags:
+    DataTag.tileType: Tile.__subclasses__()
+    DataTag.direction: Direction
+    DataTag.contents: list
+    DataTag.age: int
+    DataTag.textureIndex: int
+
+
+
+Possible data of a gridBlock:
+
+    gridBlock.data = {
+
+        Layer.TerrainLayer = {
+            DataTag.tileType: Terrain
+        }
+
+        Layer.BackgroundLayer = {
+            DataTag.tileType: FarmLandWet
+        }
+
+        Layer.MainLayer = {
+            DataTag.tileType: Plant
+            DataTag.contents: ItemStack(Seed, 1),
+            DataTag.direction: Direction.DU
+        }
+
+        Layer.DecorationLayer = {}
+    }
