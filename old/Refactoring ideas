@@ -1,0 +1,16 @@
+the world contains the terrain, floors and tile layer
+the floors consisting of a location, size and 1 material
+
+there is just 1 "tile" layer
+tiles can be passable or a wall
+tiles use map coordinates
+don't use chunks in this version
+
+
+there is no "player" -
+
+the World class contains static information about the world, for example it's rooms and their entities
+a room object holds information about it's floor and tiles
+
+be fucking considerate of code speed you dickwad
+ole aus - saj hakka hiljem koodi ümber kirjutama

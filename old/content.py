@@ -29,7 +29,6 @@ class DataTag(Enum):
     tileType = 11
 
 
-# DO NOT INCLUDE DataTag.tileType
 defaults = {
     DataTag.direction: Direction.DU,
     DataTag.contents: None,
@@ -82,8 +81,8 @@ class Tile(ABC):
     tileLayer: Layer = None  # Must be implemented
     texture: list = ['Empty.png']  # Must be implemented
     itemTexture: list = ['Empty.png']  # Must be implemented
-    dataTags: list = []  # Must be implemented todo Make textureIndex default for Tile subclasses
-    # The first dataTag of every Tile subclass is DataTag.tileClass but it's not included in Tile subclass dataTags
+    dataTags: list = []  # Must be implemented todo Make textureIndex and tileType default for tile.py subclasses
+    # The first dataTag of every tile.py subclass is DataTag.tileClass but it's not included in tile.py subclass dataTags
 
     # Probably a stupid idea buuuut.....
     # Returns a function???

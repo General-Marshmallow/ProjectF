@@ -1,2 +1,2 @@
 # ProjectF
-This is my ~8th attempt of making a game with pygame. I'm aware I tend to overcomplicate things but if there's anything fundamentally wrong with the code, please let me know. I'll try to upload a progress update every Sunday.
+This is a python prototype for an ancient idea I've been developing. Due to school, updates will roll in as my time frees up.

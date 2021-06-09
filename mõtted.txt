@@ -1,0 +1,49 @@
+AAAAAAAAAAAAAAAAAAAAAA
+
+
+[FILE material.py]
+enum Material:
+    ...
+textureMe = {
+    <material>: pygame.image.load(...)
+}
+
+
+[FILE world.py]
+class World:
+    tiles
+    entities
+
+
+[FILE player.py]
+class Player:
+    mouseontile (returns world.tiles index)
+    mouseoncoordinate
+
+
+[FILE tile.py]
+class Tile:
+    position
+    material
+    def update()
+
+
+[FILE entity.py]
+class Entity
+
+
+[FILE main.py]
+def gameloop:
+
+# EVENTS
+
+# UPDATE WORLD, PLAYER, TILES
+
+# ADD TO RENDER QUEUE
+
+# RENDER
+
+======================
+Asjad mida kunagi teha võiks:
+* world gen
+* resource visualiser

@@ -1,0 +1,2 @@
+Monthly update #1:
+Refactor main.py for cleaner code and faster execution
