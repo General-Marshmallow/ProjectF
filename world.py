@@ -1,8 +1,6 @@
 from abc import ABC
 from tile import *
-from entity import Entity
 from material import Material
-# World > chunk > tile.py
 
 
 class World:
@@ -28,6 +26,11 @@ class World:
             if tileClass.material == material:
                 self.placeTile(tileClass(location))
 
+    def getTile(self, position: list):
+        for index, coordinate in enumerate(self.tileLocationCache):
+            if position == coordinate:
+                return self.tiles[index]
+        return None
 
-    def spawnEntity(self, newEntityObject: Entity):
+    def spawnEntity(self, newEntityObject):
         self.entities.append(newEntityObject)

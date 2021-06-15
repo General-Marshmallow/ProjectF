@@ -3,7 +3,6 @@ from pygame.math import Vector2
 from material import Material
 
 
-
 class Tile(ABC):
     texture: str = 'noTexture.png'
     material: Material = Material.AIR
@@ -15,7 +14,7 @@ class Tile(ABC):
             raise TypeError("Incorrect location encoding")
 
     def getOnScreenPosition(self, cameraOffset: list) -> tuple:
-        return self.location[0]*50 + cameraOffset[0], self.location[1]*50+cameraOffset[1]
+        return self.location[0]*50 + cameraOffset[0], self.location[1]*50+cameraOffset  [1]
 
     def destroy(self, world):
         for index, me in enumerate(world.tiles):
@@ -26,12 +25,12 @@ class Tile(ABC):
         raise ReferenceError("Couldn't find tile from world.")
 
 
-class oreNode(Tile):
+class OreNode(Tile):
     texture = 'Node.png'
     material = Material.ORENODE
 
 
-class storage(Tile):
+class Storage(Tile):
     texture = 'Small_Crate.png'
     material = Material.STORAGE
 
@@ -40,11 +39,16 @@ class storage(Tile):
         self.hasMiner: bool = False
 
 
-class plant(Tile):
+class Plant(Tile):
     texture = 'plant4.png'
     material = Material.PLANT
 
 
-class barrel(Tile):
+class Barrel(Tile):
     texture = 'barrel.png'
     material = Material.BARREL
+
+
+class Stones(Tile):
+    texture = 'stones.png'
+    material = Material.STONE

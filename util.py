@@ -2,6 +2,9 @@ from pygame import image, transform
 from functools import lru_cache
 from tile import Tile
 from material import Material
+from world import World
+from player import Player
+
 
 class MapCoordinate:
     def __init__(self, x, y):
@@ -33,7 +36,12 @@ class Util:
     @staticmethod
     @lru_cache(50)
     def loadTexture(textureName: str):
-        return transform.scale(image.load('Assets/' + textureName), (50, 50))
+        return transform.scale(image.load('Assets/' + textureName), (200, 200))
+
+    @staticmethod
+    @lru_cache(50)
+    def loadTextureRotated(textureName: str, angle: float):
+        return transform.rotate(Util.loadTexture(textureName), angle)
 
     @staticmethod
     def lots(tile: Tile, cameraOffset: list): # Load offset tile surface
